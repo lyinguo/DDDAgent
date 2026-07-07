@@ -1,0 +1,201 @@
+app:
+  name: "曲浩师兄 (DeepSeek版)"
+  kind: chat
+  description: "从毕昇工作流迁移，使用DeepSeek模型作为底层驱动的聚合业务助手。"
+workflow:
+  graph:
+    nodes:
+      # 1. 开始节点：定义所需传入的全局变量
+      - id: "start-node"
+        data:
+          title: "开始"
+          type: "start"
+          variables:
+            - name: "user_name"
+              type: "string"
+              label: "用户姓名"
+            - name: "user_title"
+              type: "string"
+              label: "用户职位"
+            - name: "wechat_article_content"
+              type: "string"
+              label: "微信文章内容"
+            - name: "daily_news_content"
+              type: "string"
+              label: "每日新闻内容"
+
+      # 2. 意图识别分类器 (替代原有的复杂条件树与代码提取)
+      - id: "intent-classifier"
+        data:
+          title: "问题分类器"
+          type: "question-classifier"
+          model:
+            provider: "deepseek"
+            name: "deepseek-chat"
+            mode: "chat"
+          classes:
+            - id: "class-doc"
+              name: "文档总结"
+              instruction: "当用户上传了文件，或者要求对系统文件内容进行提取和总结时。"
+            - id: "class-wechat"
+              name: "微信文章总结"
+              instruction: "当传入了微信文章内容变量时。"
+            - id: "class-news"
+              name: "每日新闻总结"
+              instruction: "当传入了每日新闻内容变量时。"
+            - id: "class-policy"
+              name: "公司制度查询"
+              instruction: "当询问打卡、报销、请假、公司规范、福利等公司内部制度时。"
+            - id: "class-general"
+              name: "日常通用闲聊"
+              instruction: "日常聊天、写代码、写诗、翻译等通用请求。"
+
+      # 3. 知识库检索节点 (对应原 rag_d4eb9)
+      - id: "knowledge-retrieval"
+        data:
+          title: "公司制度知识库检索"
+          type: "knowledge-retrieval"
+          query_variable: "sys.query"
+          dataset_ids: 
+            - "填写你在Dify中创建的知识库ID"
+
+      # ================= 分支 LLM 节点 =================
+      
+      # 4. 文档总结大模型 (对应原 llm_e7f04)
+      - id: "llm-doc-summary"
+        data:
+          title: "文档总结"
+          type: "llm"
+          model:
+            provider: "deepseek"
+            name: "deepseek-chat"
+            mode: "chat"
+            completion_params:
+              temperature: 0.7
+          prompt_template:
+            - role: "system"
+              text: |
+                <role_definition>
+                你是一位拥有敏锐洞察力的文档智能分析专家。
+                **核心任务**：深入理解用户上传的文件内容，精准回答提问。
+                **视角适配**：根据用户职位 {{user_title}} ，调整回答的侧重点。高管侧重宏观结论与风险，执行层侧重具体步骤与数据。
+                </role_definition>
+                <output_protocol>
+                1. 唯一标题：全文仅包含一个一级标题（# Title），后接 <br>。
+                2. 禁止其他标题：严禁出现二级（##）等标题。
+                3. 形态 A（单层）：* 一、**大标题**：内容文本。<br>
+                4. 形态 B（嵌套）：* 二、**大标题**：
+                   **1. 小标题**：内容文本。
+                   **2. 小标题**：内容文本。<br> (仅末尾加br)
+                </output_protocol>
+            - role: "user"
+              text: "用户当前问题：{{sys.query}}\n用户上传文件：{{sys.files}}"
+
+      # 5. 微信文章总结大模型 (对应原 llm_98126)
+      - id: "llm-wechat-summary"
+        data:
+          title: "微信文章总结"
+          type: "llm"
+          model:
+            provider: "deepseek"
+            name: "deepseek-chat"
+            mode: "chat"
+            completion_params:
+              temperature: 0.7
+          prompt_template:
+            - role: "system"
+              text: "系统提示词同上（文档总结），但处理对象更换为微信文章。"
+            - role: "user"
+              text: "用户当前问题：{{sys.query}}\n微信文章内容：{{wechat_article_content}}"
+
+      # 6. 公司制度问答大模型 (知识库检索后执行)
+      - id: "llm-policy-qa"
+        data:
+          title: "公司制度问答"
+          type: "llm"
+          model:
+            provider: "deepseek"
+            name: "deepseek-chat"
+            mode: "chat"
+            completion_params:
+              temperature: 0.7
+          prompt_template:
+            - role: "system"
+              text: |
+                <role_definition>
+                你是一位既严谨专业又得体贴心的公司制度智能助手。
+                1. 精准性：基于用户职位（{{user_title}}），从知识库中提取最匹配的条款。
+                2. 温度感：结合用户姓名（{{user_name}}），在文末提供一句符合职场礼仪的暖心关怀。
+                </role_definition>
+                <output_protocol>
+                必须遵循纯列表格式，严禁出现二级及以下标题，仅保留一个一级标题，每个逻辑块以<br>结尾。
+                </output_protocol>
+            - role: "user"
+              text: "用户问题：{{sys.query}}\n参考文本：{{#knowledge-retrieval.result#}}"
+
+      # 7. 通用闲聊大模型 (对应原 llm_04dd2)
+      - id: "llm-general-chat"
+        data:
+          title: "日常通用闲聊"
+          type: "llm"
+          model:
+            provider: "deepseek"
+            name: "deepseek-chat"
+            mode: "chat"
+            completion_params:
+              temperature: 0.7
+          prompt_template:
+            - role: "system"
+              text: |
+                <role_definition>
+                你是一位智能、高效且富有亲和力的企业级办公助手。不是搜索框，而是有温度的合作伙伴。
+                </role_definition>
+                <critical_protocol_enforcement>
+                1. 全局规范：全文只能有一个 `# 一级标题`。严禁特殊空白编码。
+                2. 流式创作模式（Mode B）：对于写诗、散文、代码等，采用自然段落或代码块，禁止强行使用列表符。
+                </critical_protocol_enforcement>
+            - role: "user"
+              text: "用户问题：{{sys.query}}"
+
+      # 8. 统一输出回复节点
+      - id: "answer-node"
+        data:
+          title: "回复"
+          type: "answer"
+          answer: "{{#llm-doc-summary.text#}}{{#llm-wechat-summary.text#}}{{#llm-policy-qa.text#}}{{#llm-general-chat.text#}}"
+
+    # 定义节点间的流向连线
+    edges:
+      - source: "start-node"
+        target: "intent-classifier"
+      
+      # 路由分支连线
+      - source: "intent-classifier"
+        source_handle: "class-doc"
+        target: "llm-doc-summary"
+      
+      - source: "intent-classifier"
+        source_handle: "class-wechat"
+        target: "llm-wechat-summary"
+        
+      - source: "intent-classifier"
+        source_handle: "class-policy"
+        target: "knowledge-retrieval"
+        
+      - source: "intent-classifier"
+        source_handle: "class-general"
+        target: "llm-general-chat"
+        
+      # 知识库流向大模型
+      - source: "knowledge-retrieval"
+        target: "llm-policy-qa"
+        
+      # 汇聚到输出节点
+      - source: "llm-doc-summary"
+        target: "answer-node"
+      - source: "llm-wechat-summary"
+        target: "answer-node"
+      - source: "llm-policy-qa"
+        target: "answer-node"
+      - source: "llm-general-chat"
+        target: "answer-node"
