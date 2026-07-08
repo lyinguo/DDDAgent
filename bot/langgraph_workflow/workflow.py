@@ -44,6 +44,8 @@ from bot.langgraph_workflow.nodes.wechat_article import wechat_article
 from bot.langgraph_workflow.nodes.news_handler import news_handler
 from bot.langgraph_workflow.nodes.image_analysis import image_analysis
 from bot.langgraph_workflow.nodes.knowledge_qa import knowledge_qa
+from bot.langgraph_workflow.nodes.file_intent_router import file_intent_router
+from bot.langgraph_workflow.nodes.knowledge_ingest import knowledge_ingest
 
 
 def route_after_router(state: WorkflowState) -> Literal[
@@ -89,6 +91,8 @@ def build_workflow() -> StateGraph:
     workflow.add_node("news_handler", news_handler)
     workflow.add_node("image_analysis", image_analysis)
     workflow.add_node("knowledge_qa", knowledge_qa)
+    workflow.add_node("file_intent_router", file_intent_router)
+    workflow.add_node("knowledge_ingest", knowledge_ingest)
 
     # 3. 设置入口
     workflow.set_entry_point("input_router")
@@ -102,8 +106,22 @@ def build_workflow() -> StateGraph:
             ROUTE_WECHAT_ARTICLE: "query_extractor",
             ROUTE_DAILY_NEWS: "query_extractor",
             ROUTE_PUSH_NEWS: "news_handler",
-            ROUTE_FILE: "query_extractor",
+            ROUTE_FILE: "file_intent_router",
             ROUTE_IMAGE: "query_extractor",
+        },
+    )
+
+    # 4a. 文件意图路由: summarize → doc_summary, ingest → knowledge_ingest
+    def route_after_file_intent(state):
+        intent = state.get("file_intent", "summarize")
+        return "knowledge_ingest" if intent == "ingest" else "query_extractor"
+
+    workflow.add_conditional_edges(
+        "file_intent_router",
+        route_after_file_intent,
+        {
+            "knowledge_ingest": "knowledge_ingest",
+            "query_extractor": "query_extractor",
         },
     )
 
@@ -172,6 +190,7 @@ def build_workflow() -> StateGraph:
         "image_analysis",
         "news_handler",
         "knowledge_qa",
+        "knowledge_ingest",
     ]:
         workflow.add_edge(node_name, END)
 

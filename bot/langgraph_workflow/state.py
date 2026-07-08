@@ -63,6 +63,7 @@ class WorkflowState(TypedDict):
 
     # 路由标识
     route: str
+    file_intent: str                         # 文件意图: "summarize" 或 "ingest"
 
     # 中间结果（由各节点填充）
     context_messages: Optional[List[Dict[str, str]]]
@@ -115,6 +116,7 @@ def create_initial_state(
 
         # 路由
         "route": "normal",
+        "file_intent": "summarize",
 
         # 中间结果
         "context_messages": None,
