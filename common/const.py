@@ -11,6 +11,7 @@ QWEN = "qwen"  # 旧版通义模型
 QWEN_DASHSCOPE = "dashscope"  # 通义新版sdk和api key
 BISHENG = "bisheng"  # 毕昇模型
 BISHENG_WORKFLOW= "bisheng_workflow"  # 毕昇工作流模型
+LANGGRAPH_WORKFLOW = "langgraph_workflow"  # LangGraph 工作流
 
 GEMINI = "gemini"  # gemini-1.0-pro
 ZHIPU_AI = "glm-4"

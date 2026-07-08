@@ -32,6 +32,11 @@ def create_bot(bot_type):
         from bot.bisheng_workflow.bisheng_workflow_bot import BishengWorkflowBot
         return BishengWorkflowBot()
 
+    elif bot_type == const.LANGGRAPH_WORKFLOW:
+        # LangGraph 工作流接口
+        from bot.langgraph_workflow.workflow_bot import LangGraphWorkflowBot
+        return LangGraphWorkflowBot()
+
     elif bot_type == const.OPEN_AI:
         # OpenAI 官方对话模型API
         from bot.openai.open_ai_bot import OpenAIBot

@@ -66,6 +66,10 @@ class Bridge(object):
             if conf().get("bisheng_workflow_api_base") and conf().get("bisheng_workflow_id"):
                 self.btype["chat"] = const.BISHENG_WORKFLOW
 
+        # LangGraph 工作流模型识别逻辑（优先级高于毕晟工作流）
+        if conf().get("bisheng_workflow_api_base") and conf().get("bot_type") == const.LANGGRAPH_WORKFLOW:
+            self.btype["chat"] = const.LANGGRAPH_WORKFLOW
+
         self.bots = {}
         self.chat_bots = {}
 

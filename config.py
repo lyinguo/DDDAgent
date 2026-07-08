@@ -196,6 +196,11 @@ available_setting = {
     "linkai_api_key": "",
     "linkai_app_code": "",
     "linkai_api_base": "https://api.link-ai.tech",  # linkAI服务地址
+    "llm_models": [],  # LangGraph 工作流模型配置列表，每项包含 name/provider/api_base/api_key/model/temperature/max_tokens
+    "langgraph_knowledge_base_id": 2,  # LangGraph 知识库ID
+    "bisheng_rag_api_base": "",  # 毕昇RAG检索API地址
+    "bisheng_rag_api_key": "",  # 毕昇RAG检索API密钥
+    "bisheng_rag_knowledge_ids": [],  # 毕昇RAG知识库ID列表
     "Minimax_api_key": "",
     "Minimax_group_id": "",
     "Minimax_base_url": "",
