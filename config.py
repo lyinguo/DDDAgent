@@ -201,6 +201,9 @@ available_setting = {
     "bisheng_rag_api_base": "",  # 毕昇RAG检索API地址
     "bisheng_rag_api_key": "",  # 毕昇RAG检索API密钥
     "bisheng_rag_knowledge_ids": [],  # 毕昇RAG知识库ID列表
+    "embed_models": [],  # 向量模型配置列表
+    "vector_store": {},  # Milvus 向量库配置
+    "text_chunker": {},  # 文本分块配置
     "Minimax_api_key": "",
     "Minimax_group_id": "",
     "Minimax_base_url": "",

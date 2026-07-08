@@ -12,7 +12,8 @@
 from common.log import logger
 from bot.langgraph_workflow.state import WorkflowState
 from bot.langgraph_workflow.services.llm_service import LLMServiceFactory
-from bot.langgraph_workflow.services.knowledge_service import KnowledgeServiceFactory
+from bot.langgraph_workflow.services.retriever import Retriever
+from bot.langgraph_workflow.utils import build_llm_messages, build_simple_user_prompt
 
 SYSTEM_PROMPT = """你是一位既严谨专业又得体贴心的公司制度智能助手。
 
@@ -44,11 +45,11 @@ def knowledge_qa(state: WorkflowState):
     if not question:
         return {"final_output": "请告诉我您想了解什么？"}
 
-    # 1. 检索知识库
+    # 1. 检索知识库（本地向量检索）
     retrieved_text = ""
     try:
-        knowledge_service = KnowledgeServiceFactory.create()
-        response = knowledge_service.retrieve(question)
+        retriever = Retriever()
+        response = retriever.retrieve(question, top_k=5)
 
         if response.error:
             logger.warning(f"[KnowledgeQA] 知识库检索失败: {response.error}")
@@ -65,23 +66,9 @@ def knowledge_qa(state: WorkflowState):
     # 2. LLM 生成回答
     try:
         service = LLMServiceFactory.create("default")
-        user_name = state.get("user_name", "")
-        user_title = state.get("user_title", "")
-        current_time = state.get("current_time", "")
-
-        user_prompt = (
-            f"用户姓名：{user_name}\n"
-            f"用户职位：{user_title}\n"
-            f"当前时间：{current_time}\n"
-            f"用户当前问题：{question}\n"
-            f"参考文本：{retrieved_text if retrieved_text else '（未检索到相关文档）'}\n"
-            f"你的回答："
-        )
-
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
+        extra = f"参考文本：{retrieved_text if retrieved_text else '（未检索到相关文档）'}"
+        user_prompt = build_simple_user_prompt(state, question, extra)
+        messages = build_llm_messages(state, SYSTEM_PROMPT, user_prompt)
         result = service.chat(messages)
         final_output = result.strip()
         logger.debug(f"[KnowledgeQA] 回答生成成功，长度={len(final_output)}")

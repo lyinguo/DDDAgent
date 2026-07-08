@@ -11,6 +11,7 @@
 from common.log import logger
 from bot.langgraph_workflow.state import WorkflowState
 from bot.langgraph_workflow.services.llm_service import LLMServiceFactory
+from bot.langgraph_workflow.utils import build_llm_messages
 
 SYSTEM_PROMPT = """你是一个高时效性的新闻聚合助手。将新闻转化为具有视觉冲击力的纯文本块简报。
 
@@ -40,16 +41,8 @@ def news_handler(state: WorkflowState):
 
     try:
         service = LLMServiceFactory.create("default")
-
-        user_prompt = (
-            f"新闻输入：{news_content[:15000]}\n"
-            f"你的回答："
-        )
-
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
+        user_prompt = f"新闻输入：{news_content[:15000]}\n你的回答："
+        messages = build_llm_messages(state, SYSTEM_PROMPT, user_prompt)
         result = service.chat(messages)
         final_output = result.strip()
         logger.debug(f"[NewsHandler] 新闻处理成功，长度={len(final_output)}")

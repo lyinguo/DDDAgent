@@ -6,6 +6,7 @@ LangGraph 工作流 Bot 入口
 
 import os
 import time
+import base64
 import requests
 from bs4 import BeautifulSoup
 
@@ -21,6 +22,7 @@ from bot.bisheng_workflow.bisheng_workflow_session import BishengWorkflowSession
 
 from bot.langgraph_workflow.state import create_initial_state, WorkflowState
 from bot.langgraph_workflow.workflow import get_workflow
+from bot.langgraph_workflow.services.document_loader import DocumentLoader
 
 
 class LangGraphWorkflowBot(Bot):
@@ -155,18 +157,11 @@ class LangGraphWorkflowBot(Bot):
 
         # 根据消息类型填充内容通道
         if context.type == ContextType.FILE:
-            upload_url = self._process_file_upload(context)
-            state["upload_file_url"] = upload_url
-            state["dialog_files_content"] = conf().get(
-                "bisheng_workflow_default_query_uploadfile",
-                "请快速帮我总结一下这个文档的内容。"
-            )
-            state["user_input"] = state["dialog_files_content"]
+            state["dialog_files_content"] = self._process_file_locally(context)
+            state["upload_file_url"] = ""
 
         elif context.type == ContextType.IMAGE:
-            image_urls = []
-            for url in context["msg"].image_url_list:
-                image_urls.append(self._bisheng_workflow_upload_file(url))
+            image_urls = self._process_image_locally(context)
             state["image_url_list"] = image_urls
 
         elif context.type == ContextType.DAILY_NEWS:
@@ -195,44 +190,53 @@ class LangGraphWorkflowBot(Bot):
 
         return state
 
-    def _process_file_upload(self, context: Context) -> str:
-        """处理文件上传，返回上传后的URL"""
+    def _process_file_locally(self, context: Context) -> str:
+        """本地读取文件内容"""
         file_path = context.get("file_path")
+        file_name = context.get("file_name", "未知文件")
+
         if not file_path or not os.path.exists(file_path):
-            logger.error(f"[LangGraphBot] 文件路径无效: {file_path}")
-            return ""
-        try:
-            url = self._bisheng_workflow_upload_file(file_path)
-            logger.info(f"[LangGraphBot] 文件上传成功: {context.get('file_name')}, url={url}")
-            return url
-        except Exception as e:
-            logger.exception(f"[LangGraphBot] 文件上传失败: {e}")
+            logger.error(f"[LangGraphBot] 文件不存在: {file_path}")
             return ""
 
-    def _bisheng_workflow_upload_file(self, local_path: str) -> str:
-        """上传文件到毕昇"""
-        upload_url = conf().get(
-            "bisheng_workflow_upload_file_url",
-            "http://agentdev.qdai.qd-metro.com/api/v1/knowledge/upload"
-        )
-        if not os.path.exists(local_path):
-            raise FileNotFoundError(f"文件不存在: {local_path}")
+        # 用 DocumentLoader 读取文件内容
+        doc = DocumentLoader.load(file_path)
+        if doc is None:
+            logger.error(f"[LangGraphBot] 文件读取失败: {file_name}")
+            return ""
 
-        with open(local_path, 'rb') as f:
-            response = requests.post(upload_url, files={'file': f})
-            response.raise_for_status()
+        logger.info(f"[LangGraphBot] 文件读取成功: {file_name}, {len(doc.content)} 字符")
+        return doc.content
 
-        data = response.json()
-        file_path = data.get('data', {}).get('file_path', '')
-        if not file_path:
-            raise Exception("上传返回的 file_path 为空")
-
-        # 删除本地临时文件
-        try:
-            os.remove(local_path)
-        except Exception:
-            pass
-        return file_path
+    def _process_image_locally(self, context: Context) -> list:
+        """本地处理图片，编码为 base64 data URI"""
+        image_urls = []
+        image_paths = context.get("msg").image_url_list or []
+        for path in image_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, "rb") as f:
+                        img_data = base64.b64encode(f.read()).decode("utf-8")
+                    ext = os.path.splitext(path)[1].lower().lstrip(".")
+                    if ext in ["jpg", "jpeg"]:
+                        mime = "image/jpeg"
+                    elif ext == "png":
+                        mime = "image/png"
+                    elif ext == "gif":
+                        mime = "image/gif"
+                    elif ext == "webp":
+                        mime = "image/webp"
+                    else:
+                        mime = "image/jpeg"
+                    data_uri = f"data:{mime};base64,{img_data}"
+                    image_urls.append(data_uri)
+                    logger.debug(f"[LangGraphBot] 图片编码成功: {path}")
+                except Exception as e:
+                    logger.warning(f"[LangGraphBot] 图片编码失败: {path}, {e}")
+            else:
+                # 如果不是本地路径，可能是 URL，直接使用
+                image_urls.append(path)
+        return image_urls
 
     def _fetch_wechat_article_content(self, url: str) -> str:
         """获取微信公众号文章内容"""

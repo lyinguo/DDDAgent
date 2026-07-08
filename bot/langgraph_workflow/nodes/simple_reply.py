@@ -10,6 +10,7 @@
 from common.log import logger
 from bot.langgraph_workflow.state import WorkflowState
 from bot.langgraph_workflow.services.llm_service import LLMServiceFactory
+from bot.langgraph_workflow.utils import build_llm_messages, build_simple_user_prompt
 
 SYSTEM_PROMPT = """你是一位智能、高效且富有亲和力的企业级办公助手。
 
@@ -37,15 +38,8 @@ def simple_reply(state: WorkflowState):
 
     try:
         service = LLMServiceFactory.create("default")
-        user_name = state.get("user_name", "")
-        current_time = state.get("current_time", "")
-
-        user_prompt = f"用户姓名：{user_name}\n当前时间：{current_time}\n用户当前问题：{question}\n你的回答："
-
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
+        user_prompt = build_simple_user_prompt(state, question)
+        messages = build_llm_messages(state, SYSTEM_PROMPT, user_prompt)
         result = service.chat(messages)
         final_output = result.strip()
         logger.debug(f"[SimpleReply] 回复生成成功，长度={len(final_output)}")

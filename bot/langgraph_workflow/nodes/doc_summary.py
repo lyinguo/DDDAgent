@@ -8,6 +8,7 @@
 from common.log import logger
 from bot.langgraph_workflow.state import WorkflowState
 from bot.langgraph_workflow.services.llm_service import LLMServiceFactory
+from bot.langgraph_workflow.utils import build_llm_messages, build_simple_user_prompt
 
 SYSTEM_PROMPT = """你是一位拥有敏锐洞察力的文档智能分析专家。
 
@@ -34,21 +35,8 @@ def doc_summary(state: WorkflowState):
 
     try:
         service = LLMServiceFactory.create("default")
-        user_name = state.get("user_name", "")
-        user_title = state.get("user_title", "")
-
-        user_prompt = (
-            f"用户姓名：{user_name}\n"
-            f"用户职位：{user_title}\n"
-            f"用户当前问题：{question}\n"
-            f"用户上传文件：{file_content[:15000]}\n"
-            f"你的回答："
-        )
-
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
+        user_prompt = build_simple_user_prompt(state, question, f"用户上传文件：{file_content[:15000]}")
+        messages = build_llm_messages(state, SYSTEM_PROMPT, user_prompt)
         result = service.chat(messages)
         final_output = result.strip()
         logger.debug(f"[DocSummary] 文档总结成功，长度={len(final_output)}")
