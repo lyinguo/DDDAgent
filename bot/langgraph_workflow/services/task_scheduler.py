@@ -1,21 +1,21 @@
 """
 任务调度器
 
-存储: data/tasks/tasks.json
+存储: data/tasks/tasks.db (SQLite)
 支持: 责任人、单次/每天/每周/工作日、到期@提醒
 """
 
 import os
-import json
+import sqlite3
 import threading
 import time
 import re
 from datetime import datetime, timedelta
 from typing import List, Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 
 from common.log import logger
-from config import conf, get_appdata_dir
+from config import get_appdata_dir
 
 
 WEEKDAY_MAP = {
@@ -34,7 +34,7 @@ class TaskItem:
     assignee_id: str = ""
     trigger_time: str = ""
     schedule_type: str = "once"
-    schedule_weekdays: list = field(default_factory=list)
+    schedule_weekdays: str = ""
     created_at: str = ""
     status: str = "active"
     last_triggered: str = ""
@@ -56,93 +56,146 @@ class TaskScheduler:
         if self._initialized:
             return
         self._initialized = True
-        self._tasks_file = os.path.join(get_appdata_dir(), "tasks", "tasks.json")
-        os.makedirs(os.path.dirname(self._tasks_file), exist_ok=True)
-        self._tasks: List[TaskItem] = []
-        self._next_id = 1
-        self._load()
+        self._db_path = os.path.join(get_appdata_dir(), "tasks", "tasks.db")
+        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        self._local = threading.local()
+        self._init_db()
         self._running = False
         self._thread = None
 
-    def _load(self):
-        try:
-            if os.path.exists(self._tasks_file):
-                with open(self._tasks_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                self._tasks = [TaskItem(**t) for t in data.get("tasks", [])]
-                self._next_id = data.get("next_id", 1)
-        except Exception as e:
-            logger.warning(f"[Task] 加载失败: {e}")
+    def _get_conn(self):
+        """获取当前线程的数据库连接"""
+        if not hasattr(self._local, 'conn') or self._local.conn is None:
+            self._local.conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            self._local.conn.row_factory = sqlite3.Row
+        return self._local.conn
 
-    def _save(self):
-        try:
-            data = {"next_id": self._next_id, "tasks": [asdict(t) for t in self._tasks]}
-            with open(self._tasks_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"[Task] 保存失败: {e}")
+    def _init_db(self):
+        conn = self._get_conn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                creator_name TEXT DEFAULT '',
+                creator_id TEXT DEFAULT '',
+                assignee_name TEXT DEFAULT '',
+                assignee_id TEXT DEFAULT '',
+                trigger_time TEXT NOT NULL,
+                schedule_type TEXT DEFAULT 'once',
+                schedule_weekdays TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
+                status TEXT DEFAULT 'active',
+                last_triggered TEXT DEFAULT ''
+            )
+        """)
+        conn.commit()
+        logger.info(f"[Task] 数据库就绪: {self._db_path}")
 
     def add_task(self, content, trigger_time, creator_name="", creator_id="",
                  assignee_name="", assignee_id="",
-                 schedule_type="once", schedule_weekdays=None):
-        task = TaskItem(
-            id=self._next_id, content=content,
-            creator_name=creator_name, creator_id=creator_id,
-            assignee_name=assignee_name or creator_name,
-            assignee_id=assignee_id or creator_id,
-            trigger_time=trigger_time,
-            schedule_type=schedule_type,
-            schedule_weekdays=schedule_weekdays or [],
-            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                 schedule_type="once", schedule_weekdays=None) -> TaskItem:
+        conn = self._get_conn()
+        weekdays_str = ",".join(str(d) for d in (schedule_weekdays or []))
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor = conn.execute(
+            """INSERT INTO tasks (content, creator_name, creator_id, assignee_name,
+               assignee_id, trigger_time, schedule_type, schedule_weekdays, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (content, creator_name, creator_id, assignee_name or creator_name,
+             assignee_id or creator_id, trigger_time, schedule_type, weekdays_str, now)
         )
-        self._tasks.append(task)
-        self._next_id += 1
-        self._save()
-        return task
+        conn.commit()
+        task_id = cursor.lastrowid
+        logger.info(f"[Task] 添加 #{task_id}: [{assignee_name}] {content} @ {trigger_time}")
+        return TaskItem(
+            id=task_id, content=content, creator_name=creator_name,
+            creator_id=creator_id, assignee_name=assignee_name or creator_name,
+            assignee_id=assignee_id or creator_id,
+            trigger_time=trigger_time, schedule_type=schedule_type,
+            schedule_weekdays=weekdays_str, created_at=now,
+        )
 
-    def list_tasks(self, user_id=""):
-        active = [t for t in self._tasks if t.status == "active"]
+    def list_tasks(self, user_id="") -> List[TaskItem]:
+        conn = self._get_conn()
         if user_id:
-            active = [t for t in active if t.creator_id == user_id or t.assignee_id == user_id]
-        return sorted(active, key=lambda t: t.trigger_time)
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status='active' AND "
+                "(creator_id=? OR assignee_id=?) ORDER BY trigger_time",
+                (user_id, user_id)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status='active' ORDER BY trigger_time"
+            ).fetchall()
+        return [self._row_to_task(r) for r in rows]
 
-    def cancel_task(self, task_id, user_id=""):
-        for t in self._tasks:
-            if t.id == task_id and t.status == "active":
-                if user_id and t.creator_id != user_id and t.assignee_id != user_id:
-                    return False
-                t.status = "cancelled"
-                self._save()
-                return True
-        return False
+    def cancel_task(self, task_id, user_id="") -> bool:
+        conn = self._get_conn()
+        if user_id:
+            cursor = conn.execute(
+                "UPDATE tasks SET status='cancelled' WHERE id=? AND status='active' "
+                "AND (creator_id=? OR assignee_id=?)",
+                (task_id, user_id, user_id)
+            )
+        else:
+            cursor = conn.execute(
+                "UPDATE tasks SET status='cancelled' WHERE id=? AND status='active'",
+                (task_id,)
+            )
+        conn.commit()
+        return cursor.rowcount > 0
 
-    def _get_due_tasks(self):
+    def _get_due_tasks(self) -> List[TaskItem]:
+        conn = self._get_conn()
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M")
+        today_str = now.strftime("%Y-%m-%d")
         today_wd = now.weekday()
+
+        rows = conn.execute(
+            "SELECT * FROM tasks WHERE status='active' AND trigger_time<=?", (now_str,)
+        ).fetchall()
+
         due = []
-        for t in self._tasks:
-            if t.status != "active":
-                continue
-            if t.trigger_time > now_str:
-                continue
+        for row in rows:
+            t = self._row_to_task(row)
             if t.last_triggered:
                 if t.schedule_type == "once":
                     continue
-                today_str = now.strftime("%Y-%m-%d")
                 if t.last_triggered.startswith(today_str):
                     continue
             if t.schedule_type == "weekdays" and today_wd >= 5:
                 continue
-            if t.schedule_type == "weekly" and today_wd not in t.schedule_weekdays:
-                continue
-            t.last_triggered = now_str
+            if t.schedule_type == "weekly":
+                weekdays = [int(x) for x in t.schedule_weekdays.split(",") if x]
+                if today_wd not in weekdays:
+                    continue
+
+            conn.execute("UPDATE tasks SET last_triggered=? WHERE id=?",
+                         (now_str, t.id))
             if t.schedule_type == "once":
-                t.status = "done"
+                conn.execute("UPDATE tasks SET status='done' WHERE id=?", (t.id,))
             due.append(t)
+
         if due:
-            self._save()
+            conn.commit()
         return due
+
+    @staticmethod
+    def _row_to_task(row) -> TaskItem:
+        return TaskItem(
+            id=row["id"], content=row["content"],
+            creator_name=row["creator_name"], creator_id=row["creator_id"],
+            assignee_name=row["assignee_name"], assignee_id=row["assignee_id"],
+            trigger_time=row["trigger_time"],
+            schedule_type=row["schedule_type"],
+            schedule_weekdays=row["schedule_weekdays"],
+            created_at=row["created_at"],
+            status=row["status"],
+            last_triggered=row["last_triggered"],
+        )
+
+    # ===== 时间/责任人/周期解析 =====
 
     @staticmethod
     def parse_time(text: str) -> Optional[str]:
@@ -189,11 +242,6 @@ class TaskScheduler:
 
     @staticmethod
     def parse_assignee(text: str) -> tuple:
-        """
-        解析责任人
-        "@张三 做报表" → ("做报表", "张三")
-        "提醒我开会" → ("提醒我开会", None)
-        """
         m = re.search(r"@(\S+)", text)
         if m:
             name = m.group(1)
@@ -202,7 +250,6 @@ class TaskScheduler:
         m = re.search(r"(?:提醒|告诉|通知)\s*([一-鿿]{2,3})(?:\s|，|。|的|$)", text)
         if m:
             name = m.group(1)
-            # 排除名字含"我"的情况（提醒我、提醒我自己等）
             if "我" not in name:
                 remaining = text.replace(m.group(0), "", 1).strip()
                 return (remaining, name)
