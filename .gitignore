@@ -36,3 +36,4 @@ plugins/banwords/lib/__pycache__
 !plugins/agent
 !plugins/daily_news
 client_config.json
+docker/milvus/volumes/
