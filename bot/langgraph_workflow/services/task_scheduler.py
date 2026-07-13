@@ -164,6 +164,59 @@ class TaskScheduler:
             logger.info(f"[Task] 已取消 Timer: #{task_id}")
         return cur.rowcount > 0
 
+    def update_task(self, task_id, content=None, trigger_time=None, assignee_name=None,
+                    schedule_type=None, schedule_weekdays=None, group_name=None) -> bool:
+        """
+        更新任务信息，只更新非 None 的字段
+        :return: True=更新成功, False=任务不存在或已取消
+        """
+        task = self._get_task_by_id(task_id)
+        if not task or task.status != "active":
+            return False
+
+        updates = []
+        values = []
+        if content is not None:
+            updates.append("content=?")
+            values.append(content)
+        if trigger_time is not None:
+            updates.append("trigger_time=?")
+            values.append(trigger_time)
+        if assignee_name is not None:
+            updates.append("assignee_name=?")
+            values.append(assignee_name)
+        if schedule_type is not None:
+            updates.append("schedule_type=?")
+            values.append(schedule_type)
+        if schedule_weekdays is not None:
+            wds = ",".join(str(d) for d in schedule_weekdays)
+            updates.append("schedule_weekdays=?")
+            values.append(wds)
+        if group_name is not None:
+            updates.append("group_name=?")
+            values.append(group_name)
+
+        if not updates:
+            return False
+
+        values.append(task_id)
+        conn = self._get_conn()
+        conn.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE id=?", values)
+        conn.commit()
+
+        # 重新调度 timer（如果时间变了）
+        if trigger_time is not None:
+            task.trigger_time = trigger_time
+            self._schedule_task_timer(task)
+
+        logger.info(f"[Task] 更新 #{task_id}: {', '.join(updates)}")
+        return True
+
+    def _get_task_by_id(self, task_id):
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        return self._row_to_task(row) if row else None
+
     def _get_due_tasks(self):
         conn = self._get_conn(); now = datetime.now(); ns = now.strftime("%Y-%m-%d %H:%M")
         today = now.strftime("%Y-%m-%d"); wd = now.weekday()
