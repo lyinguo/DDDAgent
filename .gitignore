@@ -39,3 +39,4 @@ client_config.json
 docker/milvus/volumes/
 # 运行时数据（文件存储、任务调度、向量库索引等）
 data/ 
+tasks/

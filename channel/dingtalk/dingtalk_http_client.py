@@ -142,3 +142,37 @@ class DingtalkHttp:
         except Exception as e:
             logger.exception(f"[DingtalkHttp] 查询消息异常: {e}")
             return []
+
+    def send_group_message(self, conversation_id: str, content: str) -> bool:
+        """
+        向钉钉群聊发送文本消息（主动推送，不走机器人回复流程）
+        :param conversation_id: 群会话ID
+        :param content: 消息文本内容
+        :return: True=发送成功, False=发送失败
+        """
+        access_token = self.ensure_access_token()
+        if not access_token:
+            logger.error("[DingtalkHttp] 无法获取 access_token，群消息发送失败")
+            return False
+
+        url = f"https://api.dingtalk.com/v1.0/im/conversations/{conversation_id}/messages"
+        headers = {
+            "Content-Type": "application/json",
+            "x-acs-dingtalk-access-token": access_token,
+        }
+        payload = {
+            "msgKey": "sampleText",
+            "msgParam": json.dumps({"content": content}),
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            if response.status_code == 200:
+                logger.info(f"[DingtalkHttp] 群消息发送成功: {conversation_id}")
+                return True
+            else:
+                logger.warning(f"[DingtalkHttp] 群消息发送失败: status={response.status_code}, body={response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"[DingtalkHttp] 群消息发送异常: {e}")
+            return False

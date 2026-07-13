@@ -107,6 +107,11 @@ class DingTalkChanel(ChatChannel, dingtalk_stream.ChatbotHandler):
         self.dingtalk_http_client = None
         logger.info("[DingTalk] client_id={}, client_secret={} ".format(
             self.dingtalk_client_id, self.dingtalk_client_secret))
+        try:
+            from bot.langgraph_workflow.services.task_scheduler import TaskScheduler
+            TaskScheduler().set_channel(self)
+        except Exception as e:
+            logger.warning(f"[DingTalk] 注册调度器失败: {e}")
         # 无需群校验和前缀
         conf()["group_name_white_list"] = ["ALL_GROUP"]
         # 单聊无需前缀
@@ -123,7 +128,16 @@ class DingTalkChanel(ChatChannel, dingtalk_stream.ChatbotHandler):
     async def process(self, callback: dingtalk_stream.CallbackMessage):
         try:
             incoming_message = dingtalk_stream.ChatbotMessage.from_dict(callback.data)
-            image_download_handler = self  # 传入方法所在的类实例
+            # 注册用户 webhook 用于定时任务提醒
+            try:
+                from bot.langgraph_workflow.services.task_scheduler import register_webhook
+                staff_id = getattr(incoming_message, 'sender_staff_id', '')
+                webhook = getattr(incoming_message, 'session_webhook', '')
+                if staff_id and webhook:
+                    register_webhook(staff_id, webhook)
+            except Exception:
+                pass
+            image_download_handler = self
             dingtalk_msg = DingTalkMessage(incoming_message, image_download_handler)
             
             # 获取发送人的职位
